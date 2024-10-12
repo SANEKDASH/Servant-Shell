@@ -1,2 +1,13 @@
+EXECUTABLE = myshell
+
+SRC = main.c shell.c color_print.c 
+
+FLAGS = -Wall -O0 
+
+CC = gcc
+
 all:
-	gcc main.c shell.c -o myshell
+	$(CC) $(SRC) $(FLAGS) -o $(EXECUTABLE)
+
+clean:
+	rm -f $(EXECUTABLE)

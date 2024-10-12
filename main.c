@@ -2,7 +2,7 @@
 
 #include "shell.h"
 
-// TODO: shell context (user, tokens, etc...), pipe
+// TODO: shell context (user, tokens, etc...)
 
 int main(int argc, char *const argv[])
 {
@@ -47,7 +47,12 @@ int main(int argc, char *const argv[])
 
             case SHELL_SUCCESS:
             {
-                exec_command(&tokens);
+                shell_errs_t exec_status = SHELL_SUCCESS;
+
+                if ((exec_status = exec_command(&tokens)) != SHELL_SUCCESS)
+                {
+                    printf("%s: Dear Lord, did you have writing classes at school?\n", argv[0]);
+                }
 
                 break;
             }
@@ -70,6 +75,7 @@ int main(int argc, char *const argv[])
         }
 
         free(tokens.token_array);
+        tokens.token_array = NULL;
     }
 
     return 0;
