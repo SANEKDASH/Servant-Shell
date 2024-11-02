@@ -19,7 +19,7 @@ int main(int argc, char *const argv[])
 
     print_hail_message(cur_user_passwd, argv[0]);
 
-    struct tokens_t tokens;
+    struct tokens tokens;
 
     tokens_init(&tokens);
 

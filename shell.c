@@ -3,11 +3,11 @@
 
 static int split_buffer_into_strings(char *cmd_buf);
 
-static struct command_list_node_t *get_command_list(struct tokens_t *tokens);
+static struct command_list_node *get_command_list(struct tokens *tokens);
 
-static shell_errs_t command_list_destroy(struct command_list_node_t *cmd_list);
+static shell_errs_t command_list_destroy(struct command_list_node *cmd_list);
 
-void print_tokens(struct tokens_t *tokens)
+void print_tokens(struct tokens *tokens)
 {
     for (int i = 0; i < tokens->tokens_count; i++)
     {
@@ -29,25 +29,24 @@ void print_prompt(struct passwd *cur_user_passwd)
 {
     // ugly
     printf("+--[\033[0;31m%s\033[0m]\n", cur_user_passwd->pw_name);
-
-    write(1, prompt_line, strlen(prompt_line));
 }
 
 //=============================================================================
 
 static const size_t MAX_CMD_LEN = 256;
 
-shell_errs_t split_buffer_into_tokens(struct tokens_t *tokens)
+shell_errs_t split_buffer_into_tokens(struct tokens *tokens)
 {
-    if (tokens->read_size == 0)
+    if (tokens->buf == NULL)
     {
         return SHELL_EOF;
     }
-
-    if (tokens->read_size && tokens->buf[0] == '\0')
+    if (tokens->buf[0] == '\0')
     {
         return EMPTY_LINE;
     }
+
+    add_history(tokens->buf);
 
     tokens->tokens_count = split_buffer_into_strings(tokens->buf);
 
@@ -105,25 +104,16 @@ static int split_buffer_into_strings(char *cmd_buf)
 
 //=============================================================================
 
-shell_errs_t read_command(struct tokens_t *tokens)
+shell_errs_t read_command(struct tokens *tokens)
 {
-    tokens->read_size = read(0, tokens->buf, tokens->buf_size - 1);
-
-    if (tokens->read_size < 0)
-    {
-        perror("failed to read");
-
-        return SHELL_ERR;
-    }
-
-    tokens->buf[tokens->read_size - 1] = '\0';
+    tokens->buf = readline("+--> ");
 
     return SHELL_SUCCESS;
 }
 
 //=============================================================================
 
-static void skip_command(struct tokens_t *tokens, char ***iter)
+static void skip_command(struct tokens *tokens, char ***iter)
 {
     while (*iter < tokens->token_array + tokens->tokens_count)
     {
@@ -143,7 +133,7 @@ static void skip_command(struct tokens_t *tokens, char ***iter)
 
 //=============================================================================
 
-static bool is_next_token_enum(struct tokens_t *tokens, char **cur_token)
+static bool is_next_token_enum(struct tokens *tokens, char **cur_token)
 {
     if (cur_token < tokens->token_array + tokens->tokens_count)
     {
@@ -161,10 +151,10 @@ static bool is_next_token_enum(struct tokens_t *tokens, char **cur_token)
 
 //=============================================================================
 
-static shell_errs_t command_list_destroy(struct command_list_node_t *cmd_list)
+static shell_errs_t command_list_destroy(struct command_list_node *cmd_list)
 {
-    struct command_list_node_t *cur_cmd_node  = cmd_list;
-    struct command_list_node_t *prev_cmd_node = NULL;
+    struct command_list_node *cur_cmd_node  = cmd_list;
+    struct command_list_node *prev_cmd_node = NULL;
 
     while(cur_cmd_node != NULL)
     {
@@ -179,9 +169,9 @@ static shell_errs_t command_list_destroy(struct command_list_node_t *cmd_list)
 
 //=============================================================================
 
-static struct command_list_node_t *command_list_node_create(char **args)
+static struct command_list_node *command_list_node_create(char **args)
 {
-    struct command_list_node_t *new_cmd_node = (struct command_list_node_t *) malloc(sizeof(struct command_list_node_t));
+    struct command_list_node *new_cmd_node = (struct command_list_node *) malloc(sizeof(struct command_list_node));
 
     new_cmd_node->args     = args;
     new_cmd_node->cmd_name = *args;
@@ -197,12 +187,12 @@ static struct command_list_node_t *command_list_node_create(char **args)
 
 //=============================================================================
 
-static struct command_list_node_t *get_command_list(struct tokens_t *tokens)
+static struct command_list_node *get_command_list(struct tokens *tokens)
 {
     char **read_token  = tokens->token_array;
 
-    struct command_list_node_t *cmd_node = NULL;
-    struct command_list_node_t *cur_cmd_node = cmd_node;
+    struct command_list_node *cmd_node = NULL;
+    struct command_list_node *cur_cmd_node = cmd_node;
 
     if (read_token != NULL)
     {
@@ -255,8 +245,8 @@ static struct command_list_node_t *get_command_list(struct tokens_t *tokens)
 
 //=============================================================================
 
-static shell_errs_t create_pipe_between_procs(struct command_list_node_t *lhs_proc,
-                                              struct command_list_node_t *rhs_proc)
+static shell_errs_t create_pipe_between_procs(struct command_list_node *lhs_proc,
+                                              struct command_list_node *rhs_proc)
 {
     int pipe_fds[2];
 
@@ -279,16 +269,16 @@ static shell_errs_t create_pipe_between_procs(struct command_list_node_t *lhs_pr
 
 //=============================================================================
 
-shell_errs_t exec_command(struct tokens_t *tokens)
+shell_errs_t exec_command(struct tokens *tokens)
 {
-    struct command_list_node_t *cmd_list = get_command_list(tokens);
+    struct command_list_node *cmd_list = get_command_list(tokens);
 
     if (cmd_list == NULL)
     {
         return PARSE_ERR;
     }
 
-    struct command_list_node_t *cur_cmd_node = cmd_list;
+    struct command_list_node *cur_cmd_node = cmd_list;
 
     int cmd_count = 0;
 
@@ -309,8 +299,6 @@ shell_errs_t exec_command(struct tokens_t *tokens)
 
                 dup  (cur_cmd_node->in_fd);
                 close(cur_cmd_node->in_fd);
-
-                close(cur_cmd_node->prev_cmd->out_fd); // not a writer
             }
 
             if (cur_cmd_node->out_fd != STDOUT_FILENO)
@@ -319,8 +307,6 @@ shell_errs_t exec_command(struct tokens_t *tokens)
 
                 dup  (cur_cmd_node->out_fd);
                 close(cur_cmd_node->out_fd);
-
-                close(cur_cmd_node->next_cmd->in_fd); // not a reader
             }
 
             if (execvp(cur_cmd_node->cmd_name, cur_cmd_node->args) < 0)
@@ -367,18 +353,13 @@ shell_errs_t exec_command(struct tokens_t *tokens)
 
 //=============================================================================
 
-void tokens_init(struct tokens_t *tokens)
+void tokens_init(struct tokens *tokens)
 {
-    tokens->buf_size = MAX_CMD_LEN;
-
-    tokens->buf = (char *) malloc(sizeof(char) * MAX_CMD_LEN);
-
-    tokens->read_size = 0;
 }
 
 //=============================================================================
 
-shell_errs_t tokens_destroy_buf(struct tokens_t *tokens)
+shell_errs_t tokens_destroy_buf(struct tokens *tokens)
 {
     free(tokens->buf);
 
@@ -388,7 +369,7 @@ shell_errs_t tokens_destroy_buf(struct tokens_t *tokens)
 }
 //=============================================================================
 
-shell_errs_t tokens_destroy_token_arr(struct tokens_t *tokens)
+shell_errs_t tokens_destroy_token_arr(struct tokens *tokens)
 {
     free(tokens->token_array);
 
