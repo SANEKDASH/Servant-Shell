@@ -1,0 +1,14 @@
+// Code generation for enums and constant arrays of data connected with
+// shell error codes
+
+SHELL_ERROR_CODE(SHELL_SUCCESS,     "There is no errors")
+SHELL_ERROR_CODE(SHELL_ERR,         "Something went wrong")
+SHELL_ERROR_CODE(PARSE_ERR,         "I see a mistake in your memoirs")
+SHELL_ERROR_CODE(EMPTY_LINE,        "")
+SHELL_ERROR_CODE(SHELL_EOF,         "")
+SHELL_ERROR_CODE(PIPE_ERR,          "I can't create a pipe")
+SHELL_ERROR_CODE(NULL_ARG,          "I can't use what wasn't created")
+SHELL_ERROR_CODE(READ_ERR,          "I can't read this")
+SHELL_ERROR_CODE(UNKNOWN_FUNC_CODE, "I don't know such orders")
+SHELL_ERROR_CODE(FAILED_TO_EXEC,    "Excuse me, I failed to execute your order")
+SHELL_ERROR_CODE(FAILED_CHANGE_DIR, "I can't change directory")

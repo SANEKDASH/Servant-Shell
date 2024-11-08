@@ -1,11 +1,33 @@
 #include "shell.h"
 #include "color_print.h"
+#include "modified_prints.h"
 
 static int split_buffer_into_strings(char *cmd_buf);
 
 static struct command_list_node *get_command_list(struct tokens *tokens);
 
 static shell_errs_t command_list_destroy(struct command_list_node *cmd_list);
+
+static shell_errs_t exec_shell_func(struct shell_context     *sh_ctx,
+                                    shell_func_code_t         func_code,
+                                    struct command_list_node *cmd_node);
+
+#define  SH_PRINT(msg)       sh_print (sh_ctx, msg)
+#define ERR_PRINT(err_code) err_print(sh_ctx, err_code)
+
+#define DO_WITH_ERR_CHECK(func_to_call, what_to_do_in_case_of_error) \
+    {                                                                \
+        shell_errs_t func_err_code = func_to_call;                   \
+                                                                     \
+        if (func_err_code != SHELL_SUCCESS)                          \
+        {                                                            \
+            ERR_PRINT(func_err_code);                                \
+        }                                                            \
+                                                                     \
+        what_to_do_in_case_of_error                                  \
+    }
+
+//=============================================================================
 
 void print_tokens(struct tokens *tokens)
 {
@@ -17,18 +39,74 @@ void print_tokens(struct tokens *tokens)
 
 //=============================================================================
 
-void print_hail_message(struct passwd *cur_user_passwd, const char *prog_name)
+void print_hail_message(struct shell_context *sh_ctx)
 {
-    printf("%s: Hello, my lord, %s. Today i'm at your service.\n", prog_name,
-                                                                   cur_user_passwd->pw_name);
+    printf("%s: Hello, my lord, %s. Today i'm at your service.\n", sh_ctx->prog_name,
+                                                                   sh_ctx->user_name);
 }
 
 //=============================================================================
 
-void print_prompt(struct passwd *cur_user_passwd)
+void print_prompt(struct shell_context *sh_ctx)
 {
-    // ugly
-    printf("+--[\033[0;31m%s\033[0m]\n", cur_user_passwd->pw_name);
+    printf("+--[\033[0;31m%s\033[0m]-[%s]\n|\n", sh_ctx->user_name, sh_ctx->cwd);
+}
+
+//=============================================================================
+
+shell_errs_t call_user_interface(struct shell_context *sh_ctx)
+{
+    while (true)
+    {
+        print_prompt(sh_ctx);
+
+        shell_errs_t read_result = read_command(&(sh_ctx->tokens));
+
+        if (errno != 0)
+        {
+            ERR_PRINT(SHELL_ERR);
+
+            return SHELL_ERR;
+        }
+
+        shell_errs_t parse_result = split_buffer_into_tokens(&(sh_ctx->tokens));
+
+        switch (parse_result)
+        {
+            case EMPTY_LINE:
+            {
+                break;
+            }
+
+            case SHELL_SUCCESS:
+            {
+                DO_WITH_ERR_CHECK(exec_command(sh_ctx), /*do nothing*/);
+
+                break;
+            }
+
+            case SHELL_EOF:
+            {
+                free(sh_ctx->tokens.buf);
+
+                SH_PRINT("Nighty night..");
+
+                return 0;
+            }
+
+            default:
+            {
+                SH_PRINT("I don't know such type of orders");
+
+                break;
+            }
+        }
+
+        free(sh_ctx->tokens.token_array);
+        sh_ctx->tokens.token_array = NULL;
+    }
+
+    return SHELL_SUCCESS;
 }
 
 //=============================================================================
@@ -108,6 +186,11 @@ shell_errs_t read_command(struct tokens *tokens)
 {
     tokens->buf = readline("+--> ");
 
+    if (tokens->buf == NULL)
+    {
+        return SHELL_ERR;
+    }
+
     return SHELL_SUCCESS;
 }
 
@@ -173,7 +256,14 @@ static struct command_list_node *command_list_node_create(char **args)
 {
     struct command_list_node *new_cmd_node = (struct command_list_node *) malloc(sizeof(struct command_list_node));
 
-    new_cmd_node->args     = args;
+    if (new_cmd_node == NULL)
+    {
+        perror("failed to allocate memory");
+
+        return NULL;
+    }
+
+    new_cmd_node->args     =  args;
     new_cmd_node->cmd_name = *args;
 
     new_cmd_node->next_cmd = NULL;
@@ -269,9 +359,9 @@ static shell_errs_t create_pipe_between_procs(struct command_list_node *lhs_proc
 
 //=============================================================================
 
-shell_errs_t exec_command(struct tokens *tokens)
+shell_errs_t exec_command(struct shell_context *sh_ctx)
 {
-    struct command_list_node *cmd_list = get_command_list(tokens);
+    struct command_list_node *cmd_list = get_command_list(&sh_ctx->tokens);
 
     if (cmd_list == NULL)
     {
@@ -286,7 +376,16 @@ shell_errs_t exec_command(struct tokens *tokens)
     {
         if (cur_cmd_node->next_cmd != NULL)
         {
-            create_pipe_between_procs(cur_cmd_node, cur_cmd_node->next_cmd);
+            DO_WITH_ERR_CHECK(create_pipe_between_procs(cur_cmd_node, cur_cmd_node->next_cmd), /*do nothing*/);
+        }
+
+        shell_func_code_t func_code = get_shell_func_code(cur_cmd_node->cmd_name);
+
+        if (func_code == SHELL_CD)
+        {
+            DO_WITH_ERR_CHECK(exec_shell_func(sh_ctx, func_code, cur_cmd_node), /*do nothing*/)
+
+            break;
         }
 
         pid_t new_pid = fork();
@@ -309,11 +408,20 @@ shell_errs_t exec_command(struct tokens *tokens)
                 close(cur_cmd_node->out_fd);
             }
 
-            if (execvp(cur_cmd_node->cmd_name, cur_cmd_node->args) < 0)
+            if (func_code != NOT_SHELL_FUNC)
             {
-                perror("failed to exec");
+                DO_WITH_ERR_CHECK(exec_shell_func(sh_ctx, func_code, cur_cmd_node), /*do nothing*/);
 
-                exit(errno);
+                exit(0);
+            }
+            else
+            {
+                if (execvp(cur_cmd_node->cmd_name, cur_cmd_node->args) < 0)
+                {
+                    ERR_PRINT(FAILED_TO_EXEC);
+
+                    exit(errno);
+                }
             }
         }
 
@@ -353,12 +461,6 @@ shell_errs_t exec_command(struct tokens *tokens)
 
 //=============================================================================
 
-void tokens_init(struct tokens *tokens)
-{
-}
-
-//=============================================================================
-
 shell_errs_t tokens_destroy_buf(struct tokens *tokens)
 {
     free(tokens->buf);
@@ -379,3 +481,59 @@ shell_errs_t tokens_destroy_token_arr(struct tokens *tokens)
 }
 
 //=============================================================================
+
+shell_func_code_t get_shell_func_code(const char *func_name)
+{
+    for (int i = 0; i < SHELL_FUNCS_COUNT; i++)
+    {
+        if (strcmp(SHELL_FUNCS[i].name, func_name) == 0)
+        {
+            return SHELL_FUNCS[i].code;
+        }
+    }
+
+    return NOT_SHELL_FUNC;
+}
+
+//=============================================================================
+
+static shell_errs_t exec_shell_func(struct shell_context     *sh_ctx,
+                                           shell_func_code_t  func_code,
+                                    struct command_list_node *cmd_node)
+{
+    switch (func_code)
+    {
+        case SHELL_CD:
+        {
+            if (*cmd_node->args == NULL)
+            {
+                return NULL_ARG;
+            }
+
+            if (chdir(cmd_node->args[1]) < 0)
+            {
+                ERR_PRINT(FAILED_CHANGE_DIR);
+            }
+            else
+            {
+                getcwd(sh_ctx->cwd, MAX_CWD_BUF_SIZE);
+            }
+
+            break;
+        }
+
+        default:
+        {
+            return UNKNOWN_FUNC_CODE;
+
+            break;
+        }
+    }
+
+    return SHELL_SUCCESS;
+}
+
+//=============================================================================
+
+#undef SH_PRINT
+#undef ERR_PRINT
